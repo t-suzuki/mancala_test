@@ -13,7 +13,7 @@ class Board(object):
     WHITE    = 1 << 1
     HOLE     = 1 << 2
     KALAH    = 1 << 3
-    def __init__(self, init_stones=4, size=6):
+    def __init__(self, init_stones = 4, size = 6):
         # <-
         # |0|[1][2][3][4][5][6]| |  : white
         # | |[d][c][b][a][9][8]|7|  : black
@@ -44,23 +44,28 @@ class Board(object):
         self.next_hole = [(i + self.n_pockets - 1) % self.n_pockets for i in range(self.n_pockets)]
         self.prev_hole = [(i + 1) % self.n_pockets for i in range(self.n_pockets)]
 
+    def holes(self, color):
+        return self.black_holes if color == Color.black else self.white_holes
 
 
 class Position(object):
     u'''minimal information to represent the status of the game.'''
-    def __init__(self, board):
+    def __init__(self, board, data = None):
         assert isinstance(board, Board)
         self.board = board
-        self.data = np.zeros(self.board.n_pockets, np.int32)
-        self.data[self.board.black_holes] = self.board.init_stones
-        self.data[self.board.white_holes] = self.board.init_stones
+        if data is None:
+            self.data = np.zeros(self.board.n_pockets, np.int32)
+            self.data[self.board.black_holes] = self.board.init_stones
+            self.data[self.board.white_holes] = self.board.init_stones
+        else:
+            self.data = data
 
     def clone(self):
-        res = Position(self.board)
-        res.data = np.array(self.data)
+        res = Position(self.board, np.array(self.data))
         return res
 
     def finalize_game(self):
+        # collect all stones in the black(white) side and put them into their kalah.
         for index in self.board.black_holes:
             self.data[self.board.black_kalah] += self.data[index]
             self.data[index] = 0
@@ -77,26 +82,22 @@ class Position(object):
         return last_drop_index
 
     def _pick(self, index):
-        if isinstance(index, Move):
-            index = index.index
         n_stones = self.data[index]
         self.data[index] = 0
         last_drop_index = self._drop(self.board.next_hole[index], n_stones)
         return last_drop_index
 
-    def moveable(self, index, color):
-        if isinstance(index, Move):
-            index = index.index
+    def moveable(self, move, color):
+        index = move.index
         if color == Color.black:
             return (index in self.board.black_holes) and self.data[index] > 0
         if color == Color.white:
             return (index in self.board.white_holes) and self.data[index] > 0
         return False
 
-    def move(self, index, color, events = []):
-        if isinstance(index, Move):
-            index = index.index
-        assert self.moveable(index, color)
+    def move(self, move, color, events = []):
+        assert self.moveable(move, color)
+        index = move.index
         # pick
         last_drop_index = self._pick(index)
         # gather
@@ -125,7 +126,6 @@ class Position(object):
         # normal turn end
         return - color
 
-
     def tentative_stones_balance(self):
         # (black stones, white stones)
         return self.data[self.board.black_holes_and_kalah].sum(), self.data[self.board.white_holes_and_kalah].sum()
@@ -140,20 +140,26 @@ class Position(object):
             ])
 
 
-def evaluate_pos(pos, color):
-    if True:
-        # only stones in the kalah.
-        b = pos.data[pos.board.black_kalah]
-        w = pos.data[pos.board.white_kalah]
-    else:
-        # all stones.
-        b, w = pos.tentative_stones_balance()
+def evaluate_pos_kalah(pos, color):
+    # evaluate the Position using only stones in the kalah.
+    b = pos.data[pos.board.black_kalah]
+    w = pos.data[pos.board.white_kalah]
 
     if color == Color.black:
         return b - w
     else:
         return w - b
 
+def evaluate_pos_all(pos, color):
+    # evaluate the Position using all stones.
+    b, w = pos.tentative_stones_balance()
+
+    if color == Color.black:
+        return b - w
+    else:
+        return w - b
+
+evaluate_pos = evaluate_pos_kalah
 
 class Color(object):
     def __init__(self, value):
@@ -175,11 +181,8 @@ class Move(object):
         return 'm{}'.format(self.index)
 
 def generate_legal_moves(pos, color):
-    if color == Color.black:
-        moves = [Move(i) for i in pos.board.black_holes if pos.moveable(i, color)]
-    elif color == Color.white:
-        moves = [Move(i) for i in pos.board.white_holes if pos.moveable(i, color)]
-    return moves
+    moves = [Move(i) for i in pos.board.holes(color)]
+    return [m for m in moves if pos.moveable(m, color)]
 
 class SearchInfo(object):
     def __init__(self):
@@ -191,7 +194,7 @@ class SearchInfo(object):
         self.nps = self.nodes / self.elapsed_s if self.elapsed_s else 0.0
 
 def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
-    # return PV := [(leaf status, color, move, score)]
+    # return (move, score, PV) where PV := [(leaf status, color, move, score)]
     search_info.nodes += 1
 
     pos = stack[-1]
@@ -201,38 +204,37 @@ def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
         p = pos.clone()
         p.finalize_game()
         score = evaluate_pos(p, root_color)
-        return [('NL', None, turn_color, score)]
+        return None, score, [('NL', None, turn_color, score)]
 
     if depth == 0:
         # static evaluate
         score = evaluate_pos(pos, root_color)
-        return [('LE', None, turn_color, score)]
+        return None, score, [('LE', None, turn_color, score)]
 
     # search next depth
     minimax_score = None
-    minimax_node = None
+    minimax_move = None
     minimax_color = None
     minimax_pv = []
     for move in moves:
         stack.append(pos.clone())
         next_color = stack[-1].move(move, turn_color)
-        pv = search_dfs(stack, root_color, next_color, max_depth, depth - 1, search_info)
-        _, _, _, pv_score = pv[-1]
+        _, score, pv = search_dfs(stack, root_color, next_color, max_depth, depth - 1, search_info)
         stack.pop(-1) # unmove.
 
         if turn_color == root_color:
-            do_update = minimax_score is None or pv_score > minimax_score
+            do_update = minimax_score is None or score > minimax_score
         else:
-            do_update = minimax_score is None or pv_score < minimax_score
+            do_update = minimax_score is None or score < minimax_score
 
         if do_update:
-            minimax_score = pv_score
-            minimax_node = move
+            minimax_score = score
+            minimax_move = move
             minimax_color = next_color
             minimax_pv = pv
 
-    minimax_pv.append(('NO', minimax_node, turn_color, minimax_score))
-    return minimax_pv
+    minimax_pv.append(('NO', minimax_move, turn_color, minimax_score))
+    return minimax_move, minimax_score, minimax_pv
 
 
 def test():
@@ -257,7 +259,7 @@ def test():
 def test_search():
     stack = [Position(Board())]
     info = SearchInfo()
-    pv = search_dfs(stack, Color.black, Color.black, 4, 4, info)
+    move, score, pv = search_dfs(stack, Color.black, Color.black, 4, 4, info)
     print(pv)
 
 def test_play(args, white_is_human = False):
@@ -285,25 +287,22 @@ def test_play(args, white_is_human = False):
             moves = generate_legal_moves(pos, color)
             if len(moves) == 0:
                 break
-            index = -1
-            while not pos.moveable(index, color):
+            move = None
+            while move is None or not pos.moveable(move, color):
                 ch = six.moves.input('Enter move:').strip()
                 try:
-                    index = int(ch)
+                    move = Move(int(ch))
                 except ValueError:
                     continue
-            move = Move(index)
             print('move = {}'.format(move))
         else:
             print('TURN = {} thinking..'.format(color))
             info = SearchInfo()
             stack = [pos]
-            pv = search_dfs(stack, color, color, max_depth, max_depth, info)
+            move, score, pv = search_dfs(stack, color, color, max_depth, max_depth, info)
             info.stop()
-            if len(pv) > 0:
-                _, move, _, score = pv[-1]
-                if move is None:
-                    break
+            if move is None:
+                break
             print('move = {} score = {} (examined {} nodes, {:.2f}s, NPS={:.2f})'.format(move, score, info.nodes, info.elapsed_s, info.nps))
 
         next_pos = pos.clone()
@@ -332,6 +331,7 @@ def test_play(args, white_is_human = False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    # mode selection
     parser.add_argument('--test', dest='mode',
             action='store_const', const='test',
             help=u'set test mode')
@@ -341,9 +341,23 @@ if __name__ == '__main__':
     parser.add_argument('--self-play', dest='mode',
             action='store_const', const='self', default='human',
             help=u'set self play mode')
+    # common options
     parser.add_argument('--depth', type=int, default=4,
             help=u'max search depth')
+    parser.add_argument('--eval-kalah', dest='eval',
+            action='store_const', const='kalah',
+            help=u'evaluate the position using only stones in the kalah')
+    parser.add_argument('--eval-all', dest='eval',
+            action='store_const', const='all', default='kalah',
+            help=u'evaluate the position using all stones in the player\'s side')
     args = parser.parse_args()
+
+    # select evaluation method.
+    global evaluate_pos
+    if args.eval == 'kalah':
+        evaluate_pos = evaluate_pos_kalah
+    elif args.eval == 'all':
+        evaluate_pos = evaluate_pos_all
 
     if args.mode == 'test':
         test()
