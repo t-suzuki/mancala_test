@@ -20,7 +20,7 @@ class Board(object):
         # ->
         self.size = size
         self.n_pockets = size * 2 + 2
-        self.data = np.zeros(self.n_pockets, np.int32)
+        self.init_stones = init_stones
 
         self.black_holes = list(range(size + 2, self.n_pockets))
         self.white_holes = list(range(1, size + 1))
@@ -44,40 +44,53 @@ class Board(object):
         self.next_hole = [(i + self.n_pockets - 1) % self.n_pockets for i in range(self.n_pockets)]
         self.prev_hole = [(i + 1) % self.n_pockets for i in range(self.n_pockets)]
 
-        self.data[self.black_holes] = init_stones
-        self.data[self.white_holes] = init_stones
+
+
+class Position(object):
+    u'''minimal information to represent the status of the game.'''
+    def __init__(self, board):
+        assert isinstance(board, Board)
+        self.board = board
+        self.data = np.zeros(self.board.n_pockets, np.int32)
+        self.data[self.board.black_holes] = self.board.init_stones
+        self.data[self.board.white_holes] = self.board.init_stones
+
+    def clone(self):
+        res = Position(self.board)
+        res.data = np.array(self.data)
+        return res
 
     def finalize_game(self):
-        for index in self.black_holes:
-            self.data[self.black_kalah] += self.data[index]
+        for index in self.board.black_holes:
+            self.data[self.board.black_kalah] += self.data[index]
             self.data[index] = 0
-        for index in self.white_holes:
-            self.data[self.white_kalah] += self.data[index]
+        for index in self.board.white_holes:
+            self.data[self.board.white_kalah] += self.data[index]
             self.data[index] = 0
 
-    def drop(self, from_index, n_stones):
+    def _drop(self, from_index, n_stones):
         while n_stones > 0:
             self.data[from_index] += 1
             n_stones -= 1
-            from_index = self.next_hole[from_index]
-        last_drop_index = self.prev_hole[from_index]
+            from_index = self.board.next_hole[from_index]
+        last_drop_index = self.board.prev_hole[from_index]
         return last_drop_index
 
-    def pick(self, index):
+    def _pick(self, index):
         if isinstance(index, Move):
             index = index.index
         n_stones = self.data[index]
         self.data[index] = 0
-        last_drop_index = self.drop(index - 1, n_stones)
+        last_drop_index = self._drop(self.board.next_hole[index], n_stones)
         return last_drop_index
 
     def moveable(self, index, color):
         if isinstance(index, Move):
             index = index.index
         if color == Color.black:
-            return (index in self.black_holes) and self.data[index] > 0
+            return (index in self.board.black_holes) and self.data[index] > 0
         if color == Color.white:
-            return (index in self.white_holes) and self.data[index] > 0
+            return (index in self.board.white_holes) and self.data[index] > 0
         return False
 
     def move(self, index, color, events = []):
@@ -85,54 +98,56 @@ class Board(object):
             index = index.index
         assert self.moveable(index, color)
         # pick
-        last_drop_index = self.pick(index)
+        last_drop_index = self._pick(index)
         # gather
         if self.data[last_drop_index] == 1:
-            if color == Color.black and last_drop_index in self.black_holes:
-                j = self.opposite_holes[last_drop_index]
+            if color == Color.black and last_drop_index in self.board.black_holes:
+                j = self.board.opposite_holes[last_drop_index]
                 if self.data[j] > 0:
-                    self.data[self.black_kalah] += self.data[j] + self.data[last_drop_index]
+                    self.data[self.board.black_kalah] += self.data[j] + self.data[last_drop_index]
                     self.data[j] = 0
                     self.data[last_drop_index] = 0
                     events.append('gather')
-            elif color == Color.white and last_drop_index in self.white_holes:
-                j = self.opposite_holes[last_drop_index]
+            elif color == Color.white and last_drop_index in self.board.white_holes:
+                j = self.board.opposite_holes[last_drop_index]
                 if self.data[j] > 0:
-                    self.data[self.white_kalah] += self.data[j] + self.data[last_drop_index]
+                    self.data[self.board.white_kalah] += self.data[j] + self.data[last_drop_index]
                     self.data[j] = 0
                     self.data[last_drop_index] = 0
                     events.append('gather')
         # gain-turn
-        if color == Color.black and last_drop_index == self.black_kalah:
+        if color == Color.black and last_drop_index == self.board.black_kalah:
             events.append('gain-turn')
             return Color.black
-        if color == Color.white and last_drop_index == self.white_kalah:
+        if color == Color.white and last_drop_index == self.board.white_kalah:
             events.append('gain-turn')
             return Color.white
         # normal turn end
         return - color
 
-    def pretty(self):
-        return u'\n'.join([
-            u'   ' + u''.join('#{:<2d} '.format(i) for i in range(self.size + 1)),
-            u'W |{:2d}|'.format(self.data[0]) + u''.join('[{:2d}]'.format(i) for i in self.data[1:self.size + 1]) + u'|  |',
-            u'B |  |' + u''.join('[{:2d}]'.format(i) for i in self.data[self.size + 2:][::-1]) + u'|{:2d}|'.format(self.data[self.size + 1]),
-            u'      ' + u''.join('#{:<2d} '.format(i) for i in range(self.size * 2 + 2 - 1, self.size, -1)),
-            ])
 
     def tentative_stones_balance(self):
         # (black stones, white stones)
-        return self.data[self.black_holes_and_kalah].sum(), self.data[self.white_holes_and_kalah].sum()
+        return self.data[self.board.black_holes_and_kalah].sum(), self.data[self.board.white_holes_and_kalah].sum()
+
+    def pretty(self):
+        size = self.board.size
+        return u'\n'.join([
+            u'   ' + u''.join('#{:<2d} '.format(i) for i in range(size + 1)),
+            u'W |{:2d}|'.format(self.data[0]) + u''.join('[{:2d}]'.format(i) for i in self.data[1:size + 1]) + u'|  |',
+            u'B |  |' + u''.join('[{:2d}]'.format(i) for i in self.data[size + 2:][::-1]) + u'|{:2d}|'.format(self.data[size + 1]),
+            u'      ' + u''.join('#{:<2d} '.format(i) for i in range(size * 2 + 2 - 1, size, -1)),
+            ])
 
 
-def evaluate_board(board, color):
+def evaluate_pos(pos, color):
     if True:
-        # only stones in the kahala.
-        b = board.data[board.black_kalah]
-        w = board.data[board.white_kalah]
+        # only stones in the kalah.
+        b = pos.data[pos.board.black_kalah]
+        w = pos.data[pos.board.white_kalah]
     else:
         # all stones.
-        b, w = board.tentative_stones_balance()
+        b, w = pos.tentative_stones_balance()
 
     if color == Color.black:
         return b - w
@@ -159,12 +174,11 @@ class Move(object):
     def __repr__(self):
         return 'm{}'.format(self.index)
 
-def generate_legal_moves(stack, color):
-    board = stack[-1]
+def generate_legal_moves(pos, color):
     if color == Color.black:
-        moves = [Move(i) for i in board.black_holes if board.moveable(i, color)]
+        moves = [Move(i) for i in pos.board.black_holes if pos.moveable(i, color)]
     elif color == Color.white:
-        moves = [Move(i) for i in board.white_holes if board.moveable(i, color)]
+        moves = [Move(i) for i in pos.board.white_holes if pos.moveable(i, color)]
     return moves
 
 class SearchInfo(object):
@@ -175,33 +189,37 @@ def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
     # return PV := [(leaf status, color, move, score)]
     search_info.nodes += 1
 
-    moves = generate_legal_moves(stack, turn_color)
+    pos = stack[-1]
+    moves = generate_legal_moves(pos, turn_color)
     if len(moves) == 0:
         # no more move possible. game end.
-        b = copy.deepcopy(stack[-1])
-        b.finalize_game()
-        score = evaluate_board(b, root_color)
+        p = pos.clone()
+        p.finalize_game()
+        score = evaluate_pos(p, root_color)
         return [('NL', None, turn_color, score)]
 
     if depth == 0:
         # static evaluate
-        score = evaluate_board(stack[-1], root_color)
+        score = evaluate_pos(pos, root_color)
         return [('LE', None, turn_color, score)]
 
+    # search next depth
     minimax_score = None
     minimax_node = None
     minimax_color = None
     minimax_pv = []
     for move in moves:
-        # next depth
-        next_stack = stack + [copy.deepcopy(stack[-1])]
-        next_color = next_stack[-1].move(move, turn_color)
-        pv = search_dfs(next_stack, root_color, next_color, max_depth, depth - 1, search_info)
+        stack.append(pos.clone())
+        next_color = stack[-1].move(move, turn_color)
+        pv = search_dfs(stack, root_color, next_color, max_depth, depth - 1, search_info)
         _, _, _, pv_score = pv[-1]
+        stack.pop(-1) # unmove.
+
         if turn_color == root_color:
             do_update = minimax_score is None or pv_score > minimax_score
         else:
             do_update = minimax_score is None or pv_score < minimax_score
+
         if do_update:
             minimax_score = pv_score
             minimax_node = move
@@ -214,55 +232,57 @@ def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
 
 def test():
     b = Board()
+    p = Position(b)
     print('-'*80)
-    print(b.pretty())
-    b.pick(10)
+    print(p.pretty())
+    p._pick(10)
     print('-'*80)
-    print(b.pretty())
+    print(p.pretty())
     color = Color.black
-    print(generate_legal_moves([b], color))
+    print(generate_legal_moves(p, color))
     print('-'*80)
-    print(b.move(Move(4), Color.white))
-    print(b.pretty())
-    print('eval = ', evaluate_board(b, Color.black))
+    print(p.move(Move(4), Color.white))
+    print(p.pretty())
+    print('eval = ', evaluate_pos(p, Color.black))
     print('-'*80)
-    b.finalize_game()
+    p.finalize_game()
     print('-'*80)
-    print(b.pretty())
+    print(p.pretty())
 
 def test_search():
-    stack = [Board()]
+    stack = [Position(Board())]
     info = SearchInfo()
     pv = search_dfs(stack, Color.black, Color.black, 4, 4, info)
     print(pv)
 
 def test_play(args, white_is_human = False):
-    stack = [Board()]
+    board = Board()
+    pos = Position(board)
     color = Color.black
     max_depth = args.depth
     max_turn = 100
     for i in range(max_turn):
         print('-- # {:2d} --------------------------------'.format(i))
         print('')
-        print(stack[-1].pretty())
+        print(pos.pretty())
         print('')
-        b = stack[-1].data[stack[-1].black_kalah]
-        w = stack[-1].data[stack[-1].white_kalah]
-        allb, allw = stack[-1].tentative_stones_balance()
+        b = pos.data[board.black_kalah]
+        w = pos.data[board.white_kalah]
+        allb, allw = pos.tentative_stones_balance()
         print('BLACK = {}/{} WHITE = {}/{}'.format(b, allb, w, allw))
 
-        moves = generate_legal_moves(stack, color)
+        moves = generate_legal_moves(pos, color)
         if len(moves) == 0:
             break
 
         if white_is_human and color == Color.white:
             print('Your turn ({}).'.format(color))
-            moves = generate_legal_moves(stack, color)
+            moves = generate_legal_moves(pos, color)
             if len(moves) == 0:
                 break
             index = -1
-            while not stack[-1].moveable(index, color):
-                ch = six.input('Enter move:').strip()
+            while not pos.moveable(index, color):
+                ch = six.moves.input('Enter move:').strip()
                 try:
                     index = int(ch)
                 except ValueError:
@@ -272,6 +292,7 @@ def test_play(args, white_is_human = False):
         else:
             print('TURN = {} thinking..'.format(color))
             info = SearchInfo()
+            stack = [pos]
             pv = search_dfs(stack, color, color, max_depth, max_depth, info)
             if len(pv) > 0:
                 _, move, _, score = pv[-1]
@@ -279,22 +300,22 @@ def test_play(args, white_is_human = False):
                     break
             print('move = {} score = {} (examined {} nodes)'.format(move, score, info.nodes))
 
-        next_board = copy.deepcopy(stack[-1])
+        next_pos = pos.clone()
         events = []
-        next_color = next_board.move(move, color, events)
-        stack.append(next_board)
+        next_color = next_pos.move(move, color, events)
         if 'gain-turn' in events:
             print('{} gained another turn!!'.format(color))
         if 'gather' in events:
             print('{} gathered stones!!'.format(color))
 
         color = next_color
+        pos = next_pos
 
     print('='*80)
     print('Game end.')
-    stack[-1].finalize_game()
-    b, w = stack[-1].tentative_stones_balance()
-    print(stack[-1].pretty())
+    pos.finalize_game()
+    b, w = pos.tentative_stones_balance()
+    print(pos.pretty())
     if b > w:
         print('Black won.')
     elif b < w:
