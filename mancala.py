@@ -5,7 +5,7 @@ import six
 import sys
 import argparse
 import os
-import copy
+import time
 import numpy as np
 
 class Board(object):
@@ -184,6 +184,11 @@ def generate_legal_moves(pos, color):
 class SearchInfo(object):
     def __init__(self):
         self.nodes = 0
+        self.start_time = time.time()
+    def stop(self):
+        self.stop_time = time.time()
+        self.elapsed_s = self.stop_time - self.start_time
+        self.nps = self.nodes / self.elapsed_s if self.elapsed_s else 0.0
 
 def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
     # return PV := [(leaf status, color, move, score)]
@@ -294,11 +299,12 @@ def test_play(args, white_is_human = False):
             info = SearchInfo()
             stack = [pos]
             pv = search_dfs(stack, color, color, max_depth, max_depth, info)
+            info.stop()
             if len(pv) > 0:
                 _, move, _, score = pv[-1]
                 if move is None:
                     break
-            print('move = {} score = {} (examined {} nodes)'.format(move, score, info.nodes))
+            print('move = {} score = {} (examined {} nodes, {:.2f}s, NPS={:.2f})'.format(move, score, info.nodes, info.elapsed_s, info.nps))
 
         next_pos = pos.clone()
         events = []
