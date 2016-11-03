@@ -159,7 +159,13 @@ def evaluate_pos_all(pos, color):
     else:
         return w - b
 
+global evaluate_pos
 evaluate_pos = evaluate_pos_kalah
+
+def evaluate_finalized_pos(pos, color):
+    pos = pos.clone()
+    pos.finalize_game()
+    return evaluate_pos(pos, color)
 
 class Color(object):
     def __init__(self, value):
@@ -187,54 +193,90 @@ def generate_legal_moves(pos, color):
 class SearchInfo(object):
     def __init__(self):
         self.nodes = 0
+        self.algorithm = 'unknown'
         self.start_time = time.time()
     def stop(self):
         self.stop_time = time.time()
         self.elapsed_s = self.stop_time - self.start_time
         self.nps = self.nodes / self.elapsed_s if self.elapsed_s else 0.0
 
-def search_dfs(stack, root_color, turn_color, max_depth, depth, search_info):
-    # return (move, score, PV) where PV := [(leaf status, color, move, score)]
+def search(stack, root_color, max_depth, algorithm):
+    # (info, move, score, PV)
+    search_info = SearchInfo()
+    search_info.algorithm = algorithm
+    if algorithm == 'minimax':
+        move, score, pv = search_minimax_sub(stack, root_color, root_color, max_depth, max_depth, search_info)
+    elif algorithm == 'negamax':
+        move, score, pv = search_negamax_sub(stack, root_color, root_color, max_depth, max_depth, search_info)
+    else:
+        raise ValueError
+    search_info.stop()
+    return search_info, move, score, pv
+
+def search_minimax_sub(stack, root_color, turn_color, max_depth, depth, search_info):
+    # return (move, score, PV) where PV := [(color, move, score)]
     search_info.nodes += 1
 
     pos = stack[-1]
     moves = generate_legal_moves(pos, turn_color)
-    if len(moves) == 0:
-        # no more move possible. game end.
-        p = pos.clone()
-        p.finalize_game()
-        score = evaluate_pos(p, root_color)
-        return None, score, [('NL', None, turn_color, score)]
-
-    if depth == 0:
-        # static evaluate
-        score = evaluate_pos(pos, root_color)
-        return None, score, [('LE', None, turn_color, score)]
+    if len(moves) == 0 or depth == 0:
+        score = evaluate_finalized_pos(pos, root_color)
+        return None, score, [(None, turn_color, score)]
 
     # search next depth
-    minimax_score = None
-    minimax_move = None
-    minimax_color = None
-    minimax_pv = []
+    best_score = None
+    best_move = None
+    best_pv = []
     for move in moves:
         stack.append(pos.clone())
         next_color = stack[-1].move(move, turn_color)
-        _, score, pv = search_dfs(stack, root_color, next_color, max_depth, depth - 1, search_info)
+        _, score, pv = search_minimax_sub(stack, root_color, next_color, max_depth, depth - 1, search_info)
         stack.pop(-1) # unmove.
 
-        if turn_color == root_color:
-            do_update = minimax_score is None or score > minimax_score
-        else:
-            do_update = minimax_score is None or score < minimax_score
+        if best_score is None or (score > best_score if turn_color == root_color else score < best_score):
+            best_score = score
+            best_move = move
+            best_pv = pv
 
-        if do_update:
-            minimax_score = score
-            minimax_move = move
-            minimax_color = next_color
-            minimax_pv = pv
+    best_pv.append((best_move, turn_color, best_score))
+    return best_move, best_score, best_pv
 
-    minimax_pv.append(('NO', minimax_move, turn_color, minimax_score))
-    return minimax_move, minimax_score, minimax_pv
+def search_negamax_sub(stack, root_color, turn_color, max_depth, depth, search_info):
+    # return (move, score, PV) where PV := [(color, move, score)]
+    search_info.nodes += 1
+
+    pos = stack[-1]
+    moves = generate_legal_moves(pos, turn_color)
+    if len(moves) == 0 or depth == 0:
+        score = evaluate_finalized_pos(pos, turn_color)
+        return None, score, [(None, turn_color, score)]
+
+    # search next depth
+    best_score = None
+    best_move = None
+    best_pv = []
+    for move in moves:
+        stack.append(pos.clone())
+        next_color = stack[-1].move(move, turn_color)
+        _, score, pv = search_negamax_sub(stack, root_color, next_color, max_depth, depth - 1, search_info)
+        stack.pop(-1) # unmove.
+
+        # "score" is score from the next_color's viewpoint.
+        # best move is the score minimizer if next color is not the turn color (no gain-turn occured).
+        # [root=B], [turn=B] -(maximize)-> [next=B]
+        # [root=B], [turn=B] -(minimize)-> [next=W]
+        # [root=W], [turn=B] -(maximize)-> [next=B]
+        # [root=W], [turn=B] -(minimize)-> [next=W]
+        if next_color != turn_color:
+            score = - score
+
+        if best_score is None or score > best_score:
+            best_score = score
+            best_move = move
+            best_pv = pv
+
+    best_pv.append((best_move, turn_color, best_score))
+    return best_move, best_score, best_pv
 
 
 def test():
@@ -256,10 +298,9 @@ def test():
     print('-'*80)
     print(p.pretty())
 
-def test_search():
+def test_search(args):
     stack = [Position(Board())]
-    info = SearchInfo()
-    move, score, pv = search_dfs(stack, Color.black, Color.black, 4, 4, info)
+    info, move, score, pv = search(stack, Color.black, 4, algorithm=args.search_algorithm)
     print(pv)
 
 def test_play(args, white_is_human = False):
@@ -297,10 +338,8 @@ def test_play(args, white_is_human = False):
             print('move = {}'.format(move))
         else:
             print('TURN = {} thinking..'.format(color))
-            info = SearchInfo()
             stack = [pos]
-            move, score, pv = search_dfs(stack, color, color, max_depth, max_depth, info)
-            info.stop()
+            info, move, score, pv = search(stack, color, max_depth, args.search_algorithm)
             if move is None:
                 break
             print('move = {} score = {} (examined {} nodes, {:.2f}s, NPS={:.2f})'.format(move, score, info.nodes, info.elapsed_s, info.nps))
@@ -342,6 +381,8 @@ if __name__ == '__main__':
             action='store_const', const='self', default='human',
             help=u'set self play mode')
     # common options
+    parser.add_argument('--search-algorithm', type=str, default='minimax',
+            help=u'search algorithm')
     parser.add_argument('--depth', type=int, default=4,
             help=u'max search depth')
     parser.add_argument('--eval-kalah', dest='eval',
@@ -353,7 +394,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # select evaluation method.
-    global evaluate_pos
     if args.eval == 'kalah':
         evaluate_pos = evaluate_pos_kalah
     elif args.eval == 'all':
@@ -362,10 +402,12 @@ if __name__ == '__main__':
     if args.mode == 'test':
         test()
     elif args.mode == 'search':
-        test_search()
+        test_search(args)
     elif args.mode == 'self':
         test_play(args)
     else:
         test_play(args, white_is_human=True)
+
+    print('Search algorithm used: {}'.format(args.search_algorithm))
 
 
