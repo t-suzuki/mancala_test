@@ -200,6 +200,9 @@ class SearchInfo(object):
         self.elapsed_s = self.stop_time - self.start_time
         self.nps = self.nodes / self.elapsed_s if self.elapsed_s else 0.0
 
+# for alpha-beta
+INF = 1000
+
 def search(stack, root_color, max_depth, algorithm):
     # (info, move, score, PV)
     search_info = SearchInfo()
@@ -208,6 +211,8 @@ def search(stack, root_color, max_depth, algorithm):
         move, score, pv = search_minimax_sub(stack, root_color, root_color, max_depth, max_depth, search_info)
     elif algorithm == 'negamax':
         move, score, pv = search_negamax_sub(stack, root_color, root_color, max_depth, max_depth, search_info)
+    elif algorithm == 'alpha-beta':
+        move, score, pv = search_alpha_beta_sub(stack, root_color, root_color, max_depth, max_depth, alpha=-INF, beta=INF, search_info=search_info)
     else:
         raise ValueError
     search_info.stop()
@@ -278,6 +283,51 @@ def search_negamax_sub(stack, root_color, turn_color, max_depth, depth, search_i
     best_pv.append((best_move, turn_color, best_score))
     return best_move, best_score, best_pv
 
+def search_alpha_beta_sub(stack, root_color, turn_color, max_depth, depth, alpha, beta, search_info):
+    # return (move, score, PV) where PV := [(color, move, score)]
+    search_info.nodes += 1
+
+    pos = stack[-1]
+    moves = generate_legal_moves(pos, turn_color)
+    if len(moves) == 0 or depth == 0:
+        score = evaluate_finalized_pos(pos, root_color)
+        return None, score, [(None, turn_color, score)]
+
+    # search next depth
+    best_score = None
+    best_move = None
+    best_pv = []
+    for move in moves:
+        stack.append(pos.clone())
+        next_color = stack[-1].move(move, turn_color)
+        _, score, pv = search_alpha_beta_sub(stack, root_color, next_color, max_depth, depth - 1, alpha, beta, search_info)
+        stack.pop(-1) # unmove.
+
+        if turn_color == root_color:
+            # maximizing node.
+            if best_score is None or score > best_score:
+                best_score = score
+                best_move = move
+                best_pv = pv
+                # test for beta-cut
+                alpha = max(alpha, best_score)
+                if beta <= alpha:
+                    #print('beta cut')
+                    break
+        else:
+            # minimizing node.
+            if best_score is None or score < best_score:
+                best_score = score
+                best_move = move
+                best_pv = pv
+                # test for beta-cut
+                beta = min(beta, best_score)
+                if beta <= alpha:
+                    #print('alpha cut')
+                    break
+
+    best_pv.append((best_move, turn_color, best_score))
+    return best_move, best_score, best_pv
 
 def test():
     b = Board()
@@ -309,6 +359,7 @@ def test_play(args, white_is_human = False):
     color = Color.black
     max_depth = args.depth
     max_turn = 100
+    total_nodes = 0
     for i in range(max_turn):
         print('-- # {:2d} --------------------------------'.format(i))
         print('')
@@ -340,6 +391,7 @@ def test_play(args, white_is_human = False):
             print('TURN = {} thinking..'.format(color))
             stack = [pos]
             info, move, score, pv = search(stack, color, max_depth, args.search_algorithm)
+            total_nodes += info.nodes
             if move is None:
                 break
             print('move = {} score = {} (examined {} nodes, {:.2f}s, NPS={:.2f})'.format(move, score, info.nodes, info.elapsed_s, info.nps))
@@ -356,7 +408,7 @@ def test_play(args, white_is_human = False):
         pos = next_pos
 
     print('='*80)
-    print('Game end.')
+    print('Game end. (total nodes = {})'.format(total_nodes))
     pos.finalize_game()
     b, w = pos.tentative_stones_balance()
     print(pos.pretty())
