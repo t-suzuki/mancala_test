@@ -21,6 +21,7 @@ class Board(object):
         self.size = size
         self.n_pockets = size * 2 + 2
         self.init_stones = init_stones
+        self.win_threshold_stones = self.size * self.init_stones + 1 # if a player earned stone >= win_threshold_stones, she wins.
 
         self.black_holes = list(range(size + 2, self.n_pockets))
         self.white_holes = list(range(1, size + 1))
@@ -144,11 +145,15 @@ def evaluate_pos_kalah(pos, color):
     # evaluate the Position using only stones in the kalah.
     b = pos.data[pos.board.black_kalah]
     w = pos.data[pos.board.white_kalah]
+    black_score = b - w
+    # detect inevitable game set (kalah stones never decrease)
+    if b >= pos.board.win_threshold_stones: black_score = INF
+    if w >= pos.board.win_threshold_stones: black_score = -INF
 
     if color == Color.black:
-        return b - w
+        return black_score
     else:
-        return w - b
+        return - black_score
 
 def evaluate_pos_all(pos, color):
     # evaluate the Position using all stones.
