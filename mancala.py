@@ -359,7 +359,7 @@ def test_search(args):
     print(pv)
 
 def test_play(args, white_is_human = False):
-    board = Board()
+    board = Board(args.stones, args.holes)
     pos = Position(board)
     color = Color.black
     max_depth = args.depth
@@ -448,7 +448,14 @@ if __name__ == '__main__':
     parser.add_argument('--eval-all', dest='eval',
             action='store_const', const='all', default='kalah',
             help=u'evaluate the position using all stones in the player\'s side')
+    parser.add_argument('--stones', type=int, default=4,
+            help=u'initial number of stones in each hole')
+    parser.add_argument('--holes', type=int, default=6,
+            help=u'number of holes on each side')
     args = parser.parse_args()
+
+    assert 0 < args.stones
+    assert 0 < args.holes
 
     # select evaluation method.
     if args.eval == 'kalah':

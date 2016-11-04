@@ -15,9 +15,10 @@ this is a simple computer-mancala software written in Python.
 ## Mancala game
 
 ### Kalah
+
 - 2 players.
-- **6** holes and 1 kalah on each side. modify size parameter to  change the number of holes.
-- initially each hole has **4** stones. modify init\_stones parameter to change the number of stones.
+- **6** holes and 1 kalah on each side. use --holes to change the number of holes.
+- initially each hole has **4** stones. use --stones to change the number of stones.
 - stowing: in each turn, the current player selects a non-empty hole in the player's side. pick all stones in it and drop one by one to the counter clockwise hole (or kalah)
 - dropping the last stone in the current player's empty hole, all stones in the opposite hole is gathered to the current player's kalah.
 - dropping the last stone in the current player's kalah, the player gains another turn.
@@ -39,7 +40,7 @@ basic:
 > python mancala.py --self
 
 with additional options:
-> python mancala.py --self --depth 5 --search-algorithm alpha-beta
+> python mancala.py --self --depth 5 --search-algorithm alpha-beta --holes 7 --stones 5
 
 ## CUI Computer vs. Human Play
 
